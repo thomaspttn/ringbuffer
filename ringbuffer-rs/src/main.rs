@@ -7,6 +7,11 @@ pub struct RingBuffer {
     size: usize,
 }
 
+pub enum FlushResult {
+    Ok(Vec<u8>),
+    Err,
+}
+
 impl RingBuffer {
     pub fn new(size: usize) -> Self {
         RingBuffer {
@@ -44,10 +49,10 @@ impl RingBuffer {
         (self.head + 1) % self.size == self.tail
     }
 
-    pub fn log_message(&mut self, message: Vec<u8>) {
+    pub fn log_message(&mut self, message: &[u8]) {
         // Log message to the ring buffer
         for byte in message {
-            self.push(byte);
+            self.push(*byte);
         }
     }
 
@@ -60,21 +65,21 @@ impl RingBuffer {
         crc
     }
 
-    pub fn log_message_with_crc(&mut self, message: Vec<u8>) {
+    pub fn log_message_with_crc(&mut self, message: &[u8]) {
         // Log message to the ring buffer
-        for byte in &message {
+        for byte in message {
             self.push(*byte);
         }
 
         // add in CRC-8 checksum
-        let crc = self.crc8(&message);
+        let crc = self.crc8(message);
         self.push(crc);
 
         // add in a terminator u8acter
         self.push(b'\0');
     }
 
-    pub fn flush_message_with_crc_check(&mut self) -> Result<Vec<u8>, ()> {
+    pub fn flush_message_with_crc_check(&mut self) -> FlushResult {
         let mut message = Vec::new();
         while let Some(byte) = self.pop() {
             if byte == b'\0' {
@@ -86,28 +91,52 @@ impl RingBuffer {
         // check CRC-8 checksum
         let crc = self.crc8(&message);
         if crc == self.pop().unwrap_or(0) {
-            Ok(message)
+            FlushResult::Ok(message)
         } else {
-            Err(())
+            FlushResult::Err
         }
     }
 }
 
 fn main() {
-    // create a ringbuffer
-    let mut ringbuffer = RingBuffer::new(10);
+    // goal: log messages to a ring buffer. every N ticks, flush the ring buffer and check the
+    // CRC-8 checksum
 
-    // push some u8 data to the ringbuffer
-    ringbuffer.push(b'a');
-    ringbuffer.push(b'b');
-    ringbuffer.push(b'c');
+    let mut ring_buffer = RingBuffer::new(256);
 
-    // pop some data from the ringbuffer
-    println!("{:?}", ringbuffer.pop()); // Some(1)
+    // messages are vecs of chars as u8
+    let messages = [
+        vec![b'H', b'e', b'l', b'l', b'o'],
+        vec![b'W', b'o', b'r', b'l', b'd'],
+        vec![b'R', b'u', b's', b't'],
+        vec![b'R', b'i', b'n', b'g', b'B', b'u', b'f', b'f', b'e', b'r'],
+        vec![
+            b'R', b'u', b's', b't', b'c', b'r', b'y', b'c', b'h', b'e', b'c', b'k',
+        ],
+    ];
 
-    // check if the ringbuffer is empty
-    println!("{:?}", ringbuffer.is_empty()); // false
+    // iter = tick
+    for i in 0..100 {
+        // every 20 ticks, flip a bit in the message to be logged and log it
+        let message = &messages[i % messages.len()];
+        if i % 20 == 0 {
+            let mut flipped_message = message.clone();
+            flipped_message[0] ^= 1 << (i % 8);
+            ring_buffer.log_message_with_crc(&flipped_message);
+        } else if i % 3 == 0 {
+            ring_buffer.log_message_with_crc(message);
+        }
 
-    // check if the ringbuffer is full
-    println!("{:?}", ringbuffer.is_full()); // false
+        // every 10 ticks, flush the ring buffer and check the CRC-8 checksum
+        if i % 10 == 0 {
+            match ring_buffer.flush_message_with_crc_check() {
+                FlushResult::Ok(message) => {
+                    println!("Flushed message: {:?}", message);
+                }
+                FlushResult::Err => {
+                    println!("Flushed message: CRC-8 checksum error");
+                }
+            }
+        }
+    }
 }
